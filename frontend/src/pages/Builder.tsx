@@ -1,0 +1,378 @@
+import React, { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
+import { StepsList } from "../components/StepsList";
+import { FileExplorer } from "../components/FileExplorer";
+import { TabView } from "../components/TabView";
+import { CodeEditor } from "../components/CodeEditor";
+import { PreviewFrame } from "../components/PreviewFrame";
+import { Step, FileItem, StepType } from "../types";
+import axios from "axios";
+import { BACKEND_URL } from "../config";
+import { parseXml } from "../steps";
+import { useWebContainer } from "../hooks/useWebContainer";
+import { FileNode } from "@webcontainer/api";
+import { Loader } from "../components/Loader";
+
+// Define the correct Content type for the Gemini API structure
+type GeminiContent = {
+  // Role must be "model" for the AI response
+  role: "user" | "model";
+  parts: Array<{ text: string }>;
+};
+
+// Original Message type used in state, updated to match Gemini format
+type Message = GeminiContent;
+
+// Helper function to generate a guaranteed unique ID.
+const generateUniqueId = () => Date.now() + Math.floor(Math.random() * 1000);
+
+// Type guard for Axios errors (works even if axios.isAxiosError isn't present on the imported object)
+const isAxiosError = (err: unknown): boolean => {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as any).isAxiosError === true
+  );
+};
+
+const MOCK_FILE_CONTENT = `// This is a sample file content
+import React from 'react';
+
+function Component() {
+  return <div>Hello World</div>;
+}
+
+export default Component;`;
+
+export function Builder() {
+  const location = useLocation();
+  const { prompt } = location.state as { prompt: string };
+  const [userPrompt, setPrompt] = useState("");
+  const [llmMessages, setLlmMessages] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [templateSet, setTemplateSet] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const webcontainer = useWebContainer();
+
+  const [currentStep, setCurrentStep] = useState(1);
+  const [activeTab, setActiveTab] = useState<"code" | "preview">("code");
+  const [selectedFile, setSelectedFile] = useState<FileItem | null>(null);
+
+  const [steps, setSteps] = useState<Step[]>([]);
+
+  const [files, setFiles] = useState<FileItem[]>([]);
+
+  useEffect(() => {
+    let originalFiles = [...files];
+    let updateHappened = false;
+    steps
+      .filter(({ status }) => status === "pending")
+      .map((step) => {
+        updateHappened = true;
+        if (step?.type === StepType.CreateFile) {
+          let parsedPath = step.path?.split("/") ?? []; // ["src", "components", "App.tsx"]
+          let currentFileStructure = [...originalFiles]; // {}
+          let finalAnswerRef = currentFileStructure;
+
+          let currentFolder = "";
+          while (parsedPath.length) {
+            currentFolder = `${currentFolder}/${parsedPath[0]}`;
+            let currentFolderName = parsedPath[0];
+            parsedPath = parsedPath.slice(1);
+
+            if (!parsedPath.length) {
+              // final file
+              let file = currentFileStructure.find(
+                (x) => x.path === currentFolder
+              );
+              if (!file) {
+                currentFileStructure.push({
+                  name: currentFolderName,
+                  type: "file",
+                  path: currentFolder,
+                  content: step.code,
+                });
+              } else {
+                file.content = step.code;
+              }
+            } else {
+              /// in a folder
+              let folder = currentFileStructure.find(
+                (x) => x.path === currentFolder
+              );
+              if (!folder) {
+                // create the folder
+                currentFileStructure.push({
+                  name: currentFolderName,
+                  type: "folder",
+                  path: currentFolder,
+                  children: [],
+                });
+              }
+
+              currentFileStructure = currentFileStructure.find(
+                (x) => x.path === currentFolder
+              )!.children!;
+            }
+          }
+          originalFiles = finalAnswerRef;
+        }
+      });
+
+    if (updateHappened) {
+      setFiles(originalFiles);
+      setSteps((steps) =>
+        steps.map((s: Step) => {
+          return {
+            ...s,
+            status: "completed",
+          };
+        })
+      );
+    }
+    console.log("Updated Files Structure:", files);
+  }, [steps, files]);
+
+  useEffect(() => {
+    const createMountStructure = (files: FileItem[]): Record<string, any> => {
+      const mountStructure: Record<string, any> = {};
+
+      const processFile = (file: FileItem, isRootFolder: boolean) => {
+        if (file.type === "folder") {
+          mountStructure[file.name] = {
+            directory: file.children
+              ? Object.fromEntries(
+                  file.children.map((child: FileItem) => [
+                    child.name,
+                    processFile(child, false),
+                  ])
+                )
+              : {},
+          };
+        } else if (file.type === "file") {
+          if (isRootFolder) {
+            mountStructure[file.name] = {
+              file: {
+                contents: file.content || "",
+              },
+            };
+          } else {
+            return {
+              file: {
+                contents: file.content || "",
+              },
+            };
+          }
+        }
+
+        return mountStructure[file.name];
+      };
+
+      files.forEach((file) => processFile(file, true));
+
+      return mountStructure;
+    };
+
+    const mountStructure = createMountStructure(files);
+
+    console.log("WebContainer Mount Structure:", mountStructure);
+    webcontainer?.mount(mountStructure);
+  }, [files, webcontainer]);
+
+  async function init() {
+    setError(null);
+    try {
+      const response = await axios.post<{
+        prompts: string[];
+        uiPrompts: string[];
+      }>(`${BACKEND_URL}/template`, {
+        prompt: prompt.trim(),
+      });
+      setTemplateSet(true);
+
+      const { prompts, uiPrompts } = response.data;
+
+      setSteps(
+        parseXml(uiPrompts[0]).map((x: Step) => ({
+          ...x,
+          status: "pending",
+          id: generateUniqueId(),
+        }))
+      );
+
+      const initialMessages: Message[] = [...prompts, prompt].map(
+        (content) => ({
+          role: "user",
+          parts: [{ text: content }],
+        })
+      );
+
+      setLoading(true);
+
+      const chatPayload = { messages: initialMessages };
+      console.log(
+        "Initial Chat Request Payload:",
+        JSON.stringify(chatPayload, null, 2)
+      );
+
+      const stepsResponse = await axios.post<{ response: string }>(
+        `${BACKEND_URL}/chat`,
+        chatPayload
+      );
+
+      setLoading(false);
+
+      setSteps((s) => [
+        ...s,
+        ...parseXml(stepsResponse.data.response).map((x: Step) => ({
+          ...x,
+          status: "pending" as "pending",
+          id: generateUniqueId(),
+        })),
+      ]);
+    } catch (e: unknown) {
+      const msg =
+        isAxiosError(e) && (e as any).response?.data?.error
+          ? (e as any).response.data.error
+          : "Failed to initialize project (Server Error). Check backend logs.";
+      setError(msg);
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    init();
+  }, []);
+
+  const handleSendPrompt = async () => {
+    setError(null);
+    if (!userPrompt.trim()) return;
+
+    try {
+      const newMessage: Message = {
+        role: "user",
+        parts: [{ text: userPrompt }],
+      };
+
+      setLoading(true);
+
+      const chatPayload = { messages: [...llmMessages, newMessage] };
+      // Log the exact payload being sent to help debug the 500 error
+      console.log(
+        "Follow-up Chat Request Payload:",
+        JSON.stringify(chatPayload, null, 2)
+      );
+
+      const stepsResponse = await axios.post<{ response: string }>(
+        `${BACKEND_URL}/chat`,
+        chatPayload
+      );
+
+      setLoading(false);
+
+      // Add both user message and model response atomically
+      setLlmMessages((prevMessages) => [
+        ...prevMessages,
+        newMessage,
+        {
+          role: "model",
+          parts: [{ text: stepsResponse.data.response }],
+        },
+      ]);
+
+      setSteps((s) => [
+        ...s,
+        ...parseXml(stepsResponse.data.response).map((x: Step) => ({
+          ...x,
+          status: "pending" as "pending",
+          id: generateUniqueId(),
+        })),
+      ]);
+
+      setPrompt("");
+    } catch (e: unknown) {
+      const msg =
+        isAxiosError(e) && (e as any).response?.data?.error
+          ? (e as any).response.data.error
+          : "Failed to process request (Internal Server Error 500). Please check your backend terminal for details.";
+      setError(msg);
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-900 flex flex-col">
+      <header className="bg-gray-800 border-b border-gray-700 px-6 py-4">
+        <h1 className="text-xl font-semibold text-gray-100">Website Builder</h1>
+        <p className="text-sm text-gray-400 mt-1">Prompt: {prompt}</p>
+      </header>
+
+      <div className="flex-1 overflow-hidden">
+        <div className="h-full grid grid-cols-4 gap-6 p-6">
+          <div className="col-span-1 space-y-6 overflow-auto">
+            <div>
+              <div className="max-h-[75vh] overflow-scroll">
+                <StepsList
+                  steps={steps}
+                  currentStep={currentStep}
+                  onStepClick={setCurrentStep}
+                />
+              </div>
+              <div className="mt-4">
+                <div className="flex flex-col">
+                  {(loading || !templateSet) && (
+                    <div className="py-4">
+                      <Loader />
+                    </div>
+                  )}
+                  {!(loading || !templateSet) && (
+                    <div className="flex flex-col space-y-2">
+                      <textarea
+                        value={userPrompt}
+                        onChange={(e) => {
+                          setPrompt(e.target.value);
+                        }}
+                        className="p-2 w-full text-sm bg-gray-800 text-gray-100 border border-gray-700 rounded-md focus:ring-purple-500 focus:border-purple-500"
+                        rows={3}
+                        placeholder="Enter your next instruction here (e.g., 'Add a header' or 'Change the color')."
+                      ></textarea>
+                      <button
+                        onClick={handleSendPrompt}
+                        disabled={loading}
+                        className={`py-2 px-4 rounded-md font-semibold transition duration-150 ${
+                          loading
+                            ? "bg-gray-500 cursor-not-allowed"
+                            : "bg-purple-600 hover:bg-purple-700 text-white"
+                        }`}
+                      >
+                        Send
+                      </button>
+                      {error && (
+                        <p className="text-red-400 text-sm p-2 bg-red-900/50 rounded-md">
+                          Error: {error}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="col-span-1">
+            <FileExplorer files={files} onFileSelect={setSelectedFile} />
+          </div>
+          <div className="col-span-2 bg-gray-900 rounded-lg shadow-lg p-4 h-[calc(100vh-8rem)]">
+            <TabView activeTab={activeTab} onTabChange={setActiveTab} />
+            <div className="h-[calc(100%-4rem)]">
+              {activeTab === "code" ? (
+                <CodeEditor file={selectedFile} />
+              ) : (
+                <PreviewFrame webContainer={webcontainer} files={files} />
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
