@@ -35,15 +35,6 @@ const isAxiosError = (err: unknown): boolean => {
   );
 };
 
-const MOCK_FILE_CONTENT = `// This is a sample file content
-import React from 'react';
-
-function Component() {
-  return <div>Hello World</div>;
-}
-
-export default Component;`;
-
 export function Builder() {
   const location = useLocation();
   const { prompt } = location.state as { prompt: string };
@@ -301,73 +292,94 @@ export function Builder() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col">
-      <header className="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <h1 className="text-xl font-semibold text-gray-100">Website Builder</h1>
-        <p className="text-sm text-gray-400 mt-1">Prompt: {prompt}</p>
+    <div className="h-screen bg-black flex flex-col overflow-hidden">
+      <header className="bg-black border-b border-gray-700 px-6 py-3 flex-shrink-0">
+        <h1 className="text-lg font-semibold text-white tracking-normal">
+          Inceptus
+        </h1>
+        <p className="text-xs text-gray-400 mt-0.5">Prompt: {prompt}</p>
       </header>
 
       <div className="flex-1 overflow-hidden">
-        <div className="h-full grid grid-cols-4 gap-6 p-6">
-          <div className="col-span-1 space-y-6 overflow-auto">
-            <div>
-              <div className="max-h-[75vh] overflow-scroll">
-                <StepsList
-                  steps={steps}
-                  currentStep={currentStep}
-                  onStepClick={setCurrentStep}
-                />
-              </div>
-              <div className="mt-4">
-                <div className="flex flex-col">
-                  {(loading || !templateSet) && (
-                    <div className="py-4">
-                      <Loader />
-                    </div>
-                  )}
-                  {!(loading || !templateSet) && (
-                    <div className="flex flex-col space-y-2">
-                      <textarea
-                        value={userPrompt}
-                        onChange={(e) => {
-                          setPrompt(e.target.value);
-                        }}
-                        className="p-2 w-full text-sm bg-gray-800 text-gray-100 border border-gray-700 rounded-md focus:ring-purple-500 focus:border-purple-500"
-                        rows={3}
-                        placeholder="Enter your next instruction here (e.g., 'Add a header' or 'Change the color')."
-                      ></textarea>
-                      <button
-                        onClick={handleSendPrompt}
-                        disabled={loading}
-                        className={`py-2 px-4 rounded-md font-semibold transition duration-150 ${
-                          loading
-                            ? "bg-gray-500 cursor-not-allowed"
-                            : "bg-purple-600 hover:bg-purple-700 text-white"
-                        }`}
-                      >
-                        Send
-                      </button>
-                      {error && (
-                        <p className="text-red-400 text-sm p-2 bg-red-900/50 rounded-md">
-                          Error: {error}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
+        <div className="h-full grid grid-cols-4 gap-0">
+          {/* Column 1: Build Steps and Input */}
+          <div className="col-span-1 flex flex-col bg-black border-r border-gray-700 overflow-hidden">
+            <div className="px-4 pt-3 pb-2 flex-shrink-0">
+              <h2 className="text-sm font-semibold text-white">Build Steps</h2>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
+              <StepsList
+                steps={steps}
+                currentStep={currentStep}
+                onStepClick={setCurrentStep}
+              />
+            </div>
+
+            {/* Fixed Input Area at the bottom */}
+            <div className="p-4 border-t border-gray-700 flex-shrink-0">
+              <div className="flex flex-col">
+                {(loading || !templateSet) && (
+                  <div className="py-4">
+                    <Loader />
+                  </div>
+                )}
+                {!(loading || !templateSet) && (
+                  <div className="flex flex-col space-y-2">
+                    <textarea
+                      value={userPrompt}
+                      onChange={(e) => {
+                        setPrompt(e.target.value);
+                      }}
+                      className="p-2 w-full text-sm bg-black text-gray-100 border border-gray-700 rounded-lg focus:outline-none focus:ring-0 focus:border-gray-500 placeholder-gray-500"
+                      rows={2}
+                      placeholder="Enter your next instruction..."
+                    ></textarea>
+                    <button
+                      onClick={handleSendPrompt}
+                      disabled={loading}
+                      className={`py-2 px-4 rounded-lg text-sm font-semibold transition duration-150 ${
+                        loading
+                          ? "bg-gray-800 cursor-not-allowed text-gray-500"
+                          : "bg-gray-600 hover:bg-gray-700 text-white"
+                      }`}
+                    >
+                      Send Instruction
+                    </button>
+                    {error && (
+                      <p className="text-red-400 text-xs p-2 bg-red-900/50 rounded-md">
+                        Error: {error}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>
-          <div className="col-span-1">
-            <FileExplorer files={files} onFileSelect={setSelectedFile} />
+
+          {/* Column 2: File Explorer */}
+          <div className="col-span-1 bg-black border-r border-gray-700 flex flex-col overflow-hidden">
+            <div className="px-4 pt-3 pb-2 flex-shrink-0">
+              <h2 className="text-sm font-semibold text-white">
+                File Explorer
+              </h2>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-4 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
+              <FileExplorer files={files} onFileSelect={setSelectedFile} />
+            </div>
           </div>
-          <div className="col-span-2 bg-gray-900 rounded-lg shadow-lg p-4 h-[calc(100vh-8rem)]">
+
+          {/* Column 3 & 4: Code Editor / Preview */}
+          <div className="col-span-2 bg-black flex flex-col overflow-hidden">
             <TabView activeTab={activeTab} onTabChange={setActiveTab} />
-            <div className="h-[calc(100%-4rem)]">
+            <div className="flex-1 overflow-hidden">
               {activeTab === "code" ? (
                 <CodeEditor file={selectedFile} />
               ) : (
-                <PreviewFrame webContainer={webcontainer} files={files} />
+                <div className="bg-black h-full">
+                  <PreviewFrame webContainer={webcontainer} files={files} />
+                </div>
               )}
             </div>
           </div>

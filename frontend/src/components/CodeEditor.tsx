@@ -1,6 +1,6 @@
-import React from 'react';
-import Editor from '@monaco-editor/react';
-import { FileItem } from '../types';
+import React from "react";
+import Editor from "@monaco-editor/react";
+import { FileItem } from "../types";
 
 interface CodeEditorProps {
   file: FileItem | null;
@@ -9,8 +9,8 @@ interface CodeEditorProps {
 export function CodeEditor({ file }: CodeEditorProps) {
   if (!file) {
     return (
-      <div className="h-full flex items-center justify-center text-gray-400">
-        Select a file to view its contents
+      <div className="h-full flex items-center justify-center text-gray-400 bg-black">
+        <p className="text-gray-500">Select a file to view its contents</p>
       </div>
     );
   }
@@ -20,12 +20,12 @@ export function CodeEditor({ file }: CodeEditorProps) {
       height="100%"
       defaultLanguage="typescript"
       theme="vs-dark"
-      value={file.content || ''}
+      value={file.content || ""}
       options={{
         readOnly: true,
         minimap: { enabled: false },
         fontSize: 14,
-        wordWrap: 'on',
+        wordWrap: "on",
         scrollBeyondLastLine: false,
       }}
     />

@@ -7,7 +7,6 @@ interface PreviewFrameProps {
 }
 
 export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
-  // In a real implementation, this would compile and render the preview
   const [url, setUrl] = useState("");
 
   async function main() {
@@ -25,7 +24,6 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
 
     await webContainer.spawn("npm", ["run", "dev"]);
 
-    // Wait for `server-ready` event
     webContainer.on("server-ready", (port, url) => {
       console.log(url);
       console.log(port);
@@ -37,11 +35,12 @@ export function PreviewFrame({ files, webContainer }: PreviewFrameProps) {
     if (!webContainer) return;
     main();
   }, [webContainer]);
+
   return (
-    <div className="h-full flex items-center justify-center text-gray-400">
+    <div className="h-full flex items-center justify-center bg-black">
       {!url && (
         <div className="text-center">
-          <p className="mb-2">Loading...</p>
+          <p className="text-gray-500">Loading preview...</p>
         </div>
       )}
       {url && <iframe width={"100%"} height={"100%"} src={url} />}
